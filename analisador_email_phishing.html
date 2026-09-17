@@ -1,0 +1,868 @@
+<title>Analisador de Phishing</title>
+<style>
+  :root {
+    --bg: #0d1114;
+    --surface: #151b1f;
+    --surface-raised: #1b2227;
+    --border: #262f35;
+    --text: #e7edf0;
+    --muted: #8b9aa3;
+    --muted-dim: #5d6b73;
+    --accent: #49c5b6;
+    --accent-dim: #2c5d57;
+    --danger: #ef5350;
+    --danger-bg: #2a1516;
+    --warning: #eab04d;
+    --warning-bg: #2a2214;
+    --safe: #4caf7d;
+    --safe-bg: #142a1e;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6f7;
+    --surface: #ffffff;
+    --surface-raised: #eef1f2;
+    --border: #d7dee1;
+    --text: #16201f;
+    --muted: #5b6a70;
+    --muted-dim: #8c9aa0;
+    --accent: #1a8f80;
+    --accent-dim: #cdeae5;
+    --danger: #c62828;
+    --danger-bg: #fbe6e5;
+    --warning: #a3690a;
+    --warning-bg: #faf0dc;
+    --safe: #2e7d4f;
+    --safe-bg: #e4f4ea;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f6f7;
+      --surface: #ffffff;
+      --surface-raised: #eef1f2;
+      --border: #d7dee1;
+      --text: #16201f;
+      --muted: #5b6a70;
+      --muted-dim: #8c9aa0;
+      --accent: #1a8f80;
+      --accent-dim: #cdeae5;
+      --danger: #c62828;
+      --danger-bg: #fbe6e5;
+      --warning: #a3690a;
+      --warning-bg: #faf0dc;
+      --safe: #2e7d4f;
+      --safe-bg: #e4f4ea;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  header.top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  header.top .title-block { display: flex; align-items: baseline; gap: 12px; }
+  h1 {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h1 .cursor {
+    display: inline-block;
+    width: 0.55em;
+    background: var(--accent);
+    color: transparent;
+    margin-left: 2px;
+  }
+  .subtitle { color: var(--muted); font-size: 0.85rem; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+
+  textarea#raw-input {
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 14px;
+    outline: none;
+  }
+  textarea#raw-input:focus { border-color: var(--accent); }
+  textarea#raw-input::placeholder { color: var(--muted-dim); }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+  .file-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    border: 1px dashed var(--border);
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .file-label:hover { border-color: var(--accent); color: var(--text); }
+  input[type="file"] { display: none; }
+
+  button#analyze-btn {
+    background: var(--accent);
+    color: #05201c;
+    border: none;
+    font-weight: 600;
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    padding: 10px 20px;
+    border-radius: 7px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+  }
+  button#analyze-btn:hover { filter: brightness(1.08); }
+  button#analyze-btn:disabled { opacity: 0.5; cursor: default; }
+  button#analyze-btn:focus-visible, .file-label:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  #sample-note { font-size: 0.75rem; color: var(--muted-dim); margin-left: auto; }
+  #sample-note button {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 0.75rem; text-decoration: underline; padding: 0; font-family: var(--sans);
+  }
+
+  #results { margin-top: 28px; display: none; }
+  #results.visible { display: block; }
+
+  .score-banner {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 24px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .score-banner .score-num {
+    font-family: var(--mono);
+    font-size: 2.4rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .score-banner .score-max { font-size: 1rem; color: var(--muted); font-weight: 400; }
+  .score-banner .verdict-text { font-weight: 600; font-size: 1rem; }
+  .score-banner .verdict-sub { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+  .sev-high { background: var(--danger-bg); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+  .sev-high .score-num, .sev-high .verdict-text { color: var(--danger); }
+  .sev-mod { background: var(--warning-bg); border-color: color-mix(in srgb, var(--warning) 40%, var(--border)); }
+  .sev-mod .score-num, .sev-mod .verdict-text { color: var(--warning); }
+  .sev-low, .sev-none { background: var(--safe-bg); border-color: color-mix(in srgb, var(--safe) 40%, var(--border)); }
+  .sev-low .score-num, .sev-low .verdict-text, .sev-none .score-num, .sev-none .verdict-text { color: var(--safe); }
+
+  section.block { margin-bottom: 22px; }
+  section.block h2 {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  section.block h2 .count {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  .kv-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 8px 14px;
+    font-size: 0.86rem;
+  }
+  .kv-grid dt { color: var(--muted); }
+  .kv-grid dd { margin: 0; font-family: var(--mono); font-size: 0.82rem; word-break: break-word; }
+
+  .auth-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    padding: 4px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--surface-raised);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-dim); }
+  .chip.pass .dot { background: var(--safe); }
+  .chip.fail .dot { background: var(--danger); }
+  .chip.unknown .dot { background: var(--muted-dim); }
+
+  .flag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .flag-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 0.85rem;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--danger);
+    padding: 9px 12px;
+    border-radius: 6px;
+  }
+  .flag-item .icon { color: var(--danger); font-family: var(--mono); flex-shrink: 0; }
+  .empty-note { color: var(--muted-dim); font-size: 0.85rem; font-style: italic; }
+
+  .link-card, .att-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .link-card.risky, .att-card.risky { border-left: 3px solid var(--danger); }
+  .link-card.clean, .att-card.clean { border-left: 3px solid var(--safe); }
+  .link-url {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    word-break: break-all;
+    color: var(--text);
+  }
+  .link-text { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+  .link-flags, .att-flags { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .link-flags .f, .att-flags .f {
+    font-size: 0.78rem; color: var(--danger);
+    display: flex; gap: 6px;
+  }
+  .att-name { font-family: var(--mono); font-size: 0.86rem; }
+  .att-meta { font-size: 0.76rem; color: var(--muted); margin-top: 3px; }
+  .hash { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); word-break: break-all; }
+
+  .received-hop {
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--muted);
+    padding: 6px 0;
+    border-bottom: 1px dotted var(--border);
+  }
+  .received-hop:last-child { border-bottom: none; }
+  .received-hop .idx { color: var(--accent); margin-right: 6px; }
+
+  .keyword-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .keyword-pills .pill {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+    font-size: 0.76rem;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-family: var(--mono);
+  }
+
+  footer.disclaimer {
+    margin-top: 32px;
+    font-size: 0.75rem;
+    color: var(--muted-dim);
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+
+  ::selection { background: var(--accent-dim); }
+
+  @media (max-width: 560px) {
+    .kv-grid { grid-template-columns: 1fr; }
+    .kv-grid dt { font-weight: 600; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="title-block">
+      <h1>analisador_de_phishing<span class="cursor">_</span></h1>
+    </div>
+    <div class="subtitle">Análise heurística de cabeçalhos, autenticação, links e anexos — 100% local, no navegador</div>
+  </header>
+
+  <div class="panel">
+    <textarea id="raw-input" placeholder="Cole aqui o código-fonte completo do email (no Gmail: Mostrar original / no Outlook: Ver código-fonte da mensagem)…"></textarea>
+    <div class="controls">
+      <label class="file-label" for="file-input">📎 Carregar arquivo .eml</label>
+      <input type="file" id="file-input" accept=".eml,.txt,message/rfc822" />
+      <button id="analyze-btn">Analisar email</button>
+      <span id="sample-note"><button id="sample-btn">carregar exemplo suspeito</button></span>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <footer class="disclaimer">
+    Esta ferramenta aplica heurísticas estáticas (sem consultas de rede, DNS, WHOIS ou blacklists) sobre o texto colado. Um score baixo não garante que o email é legítimo, e um score alto não é prova definitiva de fraude — use como apoio à análise humana, não como veredito automático.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const URL_SHORTENERS = new Set(["bit.ly","tinyurl.com","t.co","goo.gl","ow.ly","is.gd","buff.ly","rebrand.ly","cutt.ly","shorturl.at","rb.gy","s.id","lnkd.in","tiny.cc","shorte.st","adf.ly","clck.ru","v.gd","qrco.de"]);
+  const SUSPICIOUS_TLDS = new Set(["zip","mov","xyz","top","click","link","work","support","gq","tk","ml","cf","ga","buzz","loan","win","download","review","country","kim","science","party","date","faith","icu","cn","ru","su"]);
+  const URGENCY_KEYWORDS = ["urgente","urgent","immediate action","ação imediata","ação urgente","sua conta será bloqueada","conta suspensa","account suspended","verifique sua conta","verify your account","confirme seus dados","confirm your identity","clique aqui","click here","click below","senha expirou","password expires","password will expire","atualize seus dados","update your information","pagamento pendente","payment overdue","fatura em anexo","invoice attached","prêmio","you have won","você ganhou","restricted account","unusual activity","atividade suspeita","security alert","alerta de segurança","last warning","último aviso","within 24 hours","em 24 horas","suspend your account","limited time","tempo limitado","aja agora","act now"];
+  const BRAND_HINTS = ["microsoft","office365","outlook","google","gmail","apple","icloud","paypal","amazon","netflix","dhl","correios","banco","bank","santander","bradesco","itau","caixa","nubank","meo","nos","vodafone","dropbox","docusign","adobe","linkedin","facebook","instagram","whatsapp"];
+  const DANGEROUS_EXT = new Set([".exe",".scr",".bat",".cmd",".com",".pif",".vbs",".vbe",".js",".jse",".wsf",".wsh",".ps1",".msi",".jar",".hta",".lnk",".iso",".img",".dll",".reg",".chm",".docm",".xlsm",".pptm",".one"]);
+  const FREEMAIL = new Set(["gmail.com","outlook.com","hotmail.com","yahoo.com","live.com","aol.com","icloud.com","protonmail.com","gmx.com","mail.com","zoho.com","yandex.com"]);
+
+  const SAMPLE_EML = `Delivered-To: voce@suaempresa.com
+Received: from mail-relay.suspicious-host.ru (unknown [203.0.113.55]) by mx.suaempresa.com with ESMTPS id abc123 for <voce@suaempresa.com>; Mon, 10 Aug 2026 08:00:00 +0000
+Received: from [192.168.1.5] by mail-relay.suspicious-host.ru; Mon, 10 Aug 2026 07:59:00 +0000
+Authentication-Results: mx.suaempresa.com; spf=fail smtp.mailfrom=micros0ft-support.top; dkim=none; dmarc=fail
+Return-Path: <bounce@micros0ft-support.top>
+Reply-To: helpdesk@micros0ft-support.top
+From: "Microsoft Account Team" <security@micros0ft-support.top>
+To: voce@suaempresa.com
+Subject: Urgent: Your account will be suspended - Verify your account now
+Date: Mon, 10 Aug 2026 08:00:00 +0000
+Message-ID: <1234@micros0ft-support.top>
+X-Mailer: PHPMailer 6.0
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BOUNDARY123"
+
+--BOUNDARY123
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<p>Dear user,</p>
+<p>We detected unusual activity on your account. You must verify your account within 24 hours or it will be suspended.</p>
+<p><a href="http://bit.ly/verify-ms-account">www.microsoft.com/account/verify</a></p>
+<p><a href="http://203.0.113.99/login.php">Click here to confirm your identity</a></p>
+<img src="http://tracker.suspicious-host.ru/pixel.gif" width="1" height="1">
+</body></html>
+
+--BOUNDARY123
+Content-Type: application/octet-stream; name="invoice.pdf.exe"
+Content-Disposition: attachment; filename="invoice.pdf.exe"
+Content-Transfer-Encoding: base64
+
+VGhpcyBpcyBhIGZha2UgdGVzdCBhdHRhY2htZW50IGZvciB0ZXN0aW5nIHB1cnBvc2VzIG9ubHku
+--BOUNDARY123--`;
+
+  function levenshteinClose(a, b, maxDist) {
+    if (a === b) return false;
+    if (Math.abs(a.length - b.length) > maxDist) return false;
+    let prev = Array.from({length: b.length + 1}, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const curr = [i];
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i-1] === b[j-1] ? 0 : 1;
+        curr.push(Math.min(prev[j] + 1, curr[j-1] + 1, prev[j-1] + cost));
+      }
+      prev = curr;
+    }
+    const dist = prev[prev.length - 1];
+    return dist > 0 && dist <= maxDist;
+  }
+
+  function extractDomain(addr) {
+    if (!addr || addr.indexOf("@") === -1) return "";
+    return addr.split("@").pop().trim().toLowerCase().replace(/>$/, "");
+  }
+  function isIp(host) {
+    return /^(\d{1,3}\.){3}\d{1,3}$/.test(host || "") &&
+      host.split(".").every(o => Number(o) >= 0 && Number(o) <= 255);
+  }
+  function getTld(host) {
+    if (!host) return "";
+    const parts = host.replace(/\.$/, "").split(".");
+    return parts[parts.length - 1].toLowerCase();
+  }
+  function parseAddr(raw) {
+    if (!raw) return {name: "", addr: ""};
+    const m = raw.match(/^(.*)<([^>]+)>\s*$/);
+    if (m) return {name: m[1].trim().replace(/^"|"$/g, ""), addr: m[2].trim()};
+    return {name: "", addr: raw.trim()};
+  }
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+  function decodeQuotedPrintable(str) {
+    str = str.replace(/=\r?\n/g, "");
+    return str.replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  }
+  function base64ToBytes(b64) {
+    const clean = b64.replace(/[^A-Za-z0-9+/=]/g, "");
+    try {
+      const bin = atob(clean);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    } catch { return new Uint8Array(); }
+  }
+  async function sha256Hex(bytes) {
+    if (!bytes.length) return null;
+    const buf = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // ---- header parsing (unfold + split) ----
+  function splitHeadersBody(raw) {
+    const normalized = raw.replace(/\r\n/g, "\n");
+    const idx = normalized.search(/\n\n/);
+    const headerBlock = idx === -1 ? normalized : normalized.slice(0, idx);
+    const body = idx === -1 ? "" : normalized.slice(idx + 2);
+    const unfolded = headerBlock.replace(/\n[ \t]+/g, " ");
+    const lines = unfolded.split("\n").filter(Boolean);
+    const headers = [];
+    for (const line of lines) {
+      const m = line.match(/^([^:\s][^:]*):\s*(.*)$/);
+      if (m) headers.push([m[1], m[2]]);
+    }
+    return {headers, body};
+  }
+  function getHeader(headers, name) {
+    const h = headers.find(([k]) => k.toLowerCase() === name.toLowerCase());
+    return h ? h[1] : "";
+  }
+  function getAllHeaders(headers, name) {
+    return headers.filter(([k]) => k.toLowerCase() === name.toLowerCase()).map(([, v]) => v);
+  }
+
+  function parseAuthResults(headers) {
+    const result = {spf: null, dkim: null, dmarc: null};
+    for (const name of ["Authentication-Results", "ARC-Authentication-Results"]) {
+      for (const val of getAllHeaders(headers, name)) {
+        for (const mech of ["spf","dkim","dmarc"]) {
+          const m = val.match(new RegExp(mech + "=(\\w+)", "i"));
+          if (m && !result[mech]) result[mech] = m[1].toLowerCase();
+        }
+      }
+    }
+    const spfHeader = getHeader(headers, "Received-SPF");
+    if (spfHeader && !result.spf) {
+      const m = spfHeader.trim().match(/^(\w+)/);
+      if (m) result.spf = m[1].toLowerCase();
+    }
+    return result;
+  }
+
+  function parseReceivedChain(headers) {
+    const ipRe = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+    return getAllHeaders(headers, "Received").map(raw => {
+      const clean = raw.replace(/\s+/g, " ").trim();
+      const ips = [...new Set(clean.match(ipRe) || [])];
+      const fromM = clean.match(/from\s+(\S+)/);
+      const byM = clean.match(/by\s+(\S+)/);
+      return {raw: clean, ips, from: fromM ? fromM[1] : null, by: byM ? byM[1] : null};
+    });
+  }
+
+  // ---- MIME body parsing ----
+  function parseContentType(val) {
+    if (!val) return {type: "text/plain", params: {}};
+    const parts = val.split(";");
+    const type = parts[0].trim().toLowerCase();
+    const params = {};
+    for (let i = 1; i < parts.length; i++) {
+      const m = parts[i].match(/([a-zA-Z0-9-]+)\s*=\s*"?([^"]*)"?/);
+      if (m) params[m[1].toLowerCase()] = m[2];
+    }
+    return {type, params};
+  }
+
+  function decodePart(content, encoding) {
+    encoding = (encoding || "").toLowerCase();
+    if (encoding === "base64") return {text: null, raw: content};
+    if (encoding === "quoted-printable") return {text: decodeQuotedPrintable(content), raw: null};
+    return {text: content, raw: null};
+  }
+
+  function walkMime(contentTypeHeader, body, depth, collector) {
+    if (depth > 6) return;
+    const {type, params} = parseContentType(contentTypeHeader);
+    if (type.startsWith("multipart/") && params.boundary) {
+      const boundary = params.boundary;
+      const delim = "--" + boundary;
+      const segments = body.split(delim);
+      for (let i = 1; i < segments.length; i++) {
+        let seg = segments[i];
+        if (seg.startsWith("--")) continue; // closing boundary
+        seg = seg.replace(/^\r?\n/, "");
+        const {headers: partHeaders, body: partBody} = splitHeadersBody(seg);
+        const partCT = getHeader(partHeaders, "Content-Type") || "text/plain";
+        const partCTE = getHeader(partHeaders, "Content-Transfer-Encoding");
+        const disp = getHeader(partHeaders, "Content-Disposition");
+        const {type: pType, params: pParams} = parseContentType(partCT);
+        if (pType.startsWith("multipart/")) {
+          walkMime(partCT, partBody, depth + 1, collector);
+          continue;
+        }
+        let filename = null;
+        const dispM = disp.match(/filename\*?=\s*"?([^";\r\n]+)"?/i);
+        if (dispM) filename = dispM[1];
+        else if (pParams.name) filename = pParams.name;
+
+        const isAttachment = /attachment/i.test(disp) || (!!filename && !pType.startsWith("text/"));
+
+        if (isAttachment) {
+          collector.attachments.push({
+            filename: filename || "(sem nome)",
+            contentType: pType,
+            encoding: partCTE,
+            rawContent: partBody.trim(),
+          });
+        } else if (pType === "text/html") {
+          const decoded = decodePart(partBody, partCTE);
+          collector.html += decoded.text != null ? decoded.text :
+            new TextDecoder().decode(base64ToBytes(partBody));
+        } else if (pType === "text/plain") {
+          const decoded = decodePart(partBody, partCTE);
+          collector.text += decoded.text != null ? decoded.text :
+            new TextDecoder().decode(base64ToBytes(partBody));
+        }
+      }
+    } else {
+      const cte = ""; // handled by caller normally; single-part top-level
+      if (type === "text/html") collector.html += body;
+      else collector.text += body;
+    }
+  }
+
+  function extractLinks(text, html) {
+    const links = [];
+    const seen = new Set();
+    const anchorRe = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let m;
+    while ((m = anchorRe.exec(html))) {
+      const href = m[1];
+      const displayText = m[2].replace(/<[^>]+>/g, "").trim();
+      const key = href + "|" + displayText;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      links.push({url: href, displayText});
+    }
+    const hrefRe = /href\s*=\s*["']([^"']+)["']/gi;
+    while ((m = hrefRe.exec(html))) {
+      if (!links.some(l => l.url === m[1])) links.push({url: m[1], displayText: ""});
+    }
+    const plainUrlRe = /(https?:\/\/[^\s<>"')]+)/gi;
+    for (const src of [text, html.replace(/<[^>]+>/g, " ")]) {
+      while ((m = plainUrlRe.exec(src))) {
+        if (!links.some(l => l.url === m[1])) links.push({url: m[1], displayText: ""});
+      }
+    }
+    return links;
+  }
+
+  function analyzeLink(link, senderDomain) {
+    const {url, displayText} = link;
+    const flags = [];
+    if (/^mailto:/i.test(url)) return {...link, host: null, flags: []};
+    let host = "";
+    try {
+      const u = new URL(url.includes("://") ? url : "http://" + url);
+      host = (u.hostname || "").toLowerCase();
+    } catch { flags.push("URL malformada / não foi possível interpretar"); }
+
+    if (host && isIp(host)) flags.push("Link aponta diretamente para um endereço IP (comum em phishing)");
+    if (URL_SHORTENERS.has(host)) flags.push(`Uso de encurtador de URL (${host}) — destino real oculto`);
+    const tld = getTld(host);
+    if (SUSPICIOUS_TLDS.has(tld)) flags.push(`Domínio com TLD frequentemente associado a abuso (.${tld})`);
+    if ((host.match(/-/g) || []).length >= 3) flags.push("Domínio com muitos hifens (padrão comum em domínios fraudulentos)");
+    if ((host.match(/\./g) || []).length >= 4) flags.push("Domínio com muitos subdomínios (pode tentar ofuscar o domínio real)");
+
+    const textUrlMatch = displayText.toLowerCase().match(/([a-z0-9.-]+\.[a-z]{2,})/);
+    if (textUrlMatch && host) {
+      const claimed = textUrlMatch[1];
+      if (claimed !== host && !host.includes(claimed)) {
+        flags.push(`Texto do link exibe um domínio diferente do destino real ('${claimed}' ≠ '${host}')`);
+      }
+    }
+    if (host && senderDomain) {
+      const baseSender = senderDomain.split(".")[0];
+      const baseHost = host.split(".")[0];
+      if (baseSender && baseHost && levenshteinClose(baseSender, baseHost, 2)) {
+        flags.push(`Domínio do link ('${host}') é visualmente parecido com o domínio do remetente ('${senderDomain}') — possível typosquatting`);
+      }
+    }
+    for (const brand of BRAND_HINTS) {
+      if (displayText.toLowerCase().includes(brand) && host && !host.includes(brand)) {
+        flags.push(`Texto do link menciona '${brand}' mas o domínio real é '${host}' — possível falsificação de marca`);
+        break;
+      }
+    }
+    return {url, displayText, host, flags};
+  }
+
+  async function analyzeAttachment(att) {
+    const ext = (att.filename.match(/\.[a-z0-9]+$/i) || [""])[0].toLowerCase();
+    const flags = [];
+    if (DANGEROUS_EXT.has(ext)) flags.push(`Extensão potencialmente perigosa (${ext})`);
+    if ((att.filename.match(/\./g) || []).length >= 2 && /\.\w+\.\w+$/.test(att.filename.toLowerCase())) {
+      flags.push("Nome de arquivo com dupla extensão (tentativa de disfarce, ex: 'fatura.pdf.exe')");
+    }
+    let bytes = new Uint8Array();
+    if ((att.encoding || "").toLowerCase() === "base64") {
+      bytes = base64ToBytes(att.rawContent);
+    } else {
+      bytes = new TextEncoder().encode(att.rawContent);
+    }
+    const sha256 = await sha256Hex(bytes);
+    return {filename: att.filename, contentType: att.contentType, sizeBytes: bytes.length, sha256, flags};
+  }
+
+  async function analyzeEmail(raw) {
+    const {headers, body} = splitHeadersBody(raw);
+    const fromRaw = getHeader(headers, "From");
+    const replyToRaw = getHeader(headers, "Reply-To");
+    const returnPathRaw = getHeader(headers, "Return-Path");
+    const toRaw = getHeader(headers, "To");
+    const subject = getHeader(headers, "Subject");
+    const dateRaw = getHeader(headers, "Date");
+    const messageId = getHeader(headers, "Message-ID");
+    const mailer = getHeader(headers, "X-Mailer") || getHeader(headers, "User-Agent");
+
+    const from = parseAddr(fromRaw);
+    const replyTo = parseAddr(replyToRaw);
+    const returnPath = parseAddr(returnPathRaw);
+    const fromDomain = extractDomain(from.addr);
+    const replyToDomain = extractDomain(replyTo.addr);
+    const returnPathDomain = extractDomain(returnPath.addr);
+
+    const headerFlags = [];
+    if (replyTo.addr && replyToDomain && replyToDomain !== fromDomain) {
+      headerFlags.push(`Reply-To ('${replyTo.addr}') difere do From ('${from.addr}') — respostas seriam enviadas para outro endereço`);
+    }
+    if (returnPath.addr && returnPathDomain && returnPathDomain !== fromDomain) {
+      headerFlags.push(`Return-Path ('${returnPath.addr}') difere do domínio do From ('${fromDomain}') — possível envelope-from falsificado`);
+    }
+    if (from.name) {
+      for (const brand of BRAND_HINTS) {
+        if (from.name.toLowerCase().includes(brand) && fromDomain && !fromDomain.includes(brand)) {
+          headerFlags.push(`Nome de exibição menciona '${brand}' mas o domínio do email é '${fromDomain}' — possível falsificação de identidade`);
+          break;
+        }
+      }
+    }
+    if (FREEMAIL.has(fromDomain)) {
+      headerFlags.push(`Remetente usa provedor de email gratuito (${fromDomain}) — incomum para comunicação corporativa oficial`);
+    }
+    const fromTld = getTld(fromDomain);
+    if (SUSPICIOUS_TLDS.has(fromTld)) headerFlags.push(`Domínio do remetente usa TLD suspeito (.${fromTld})`);
+
+    const auth = parseAuthResults(headers);
+    if (auth.spf && auth.spf !== "pass") headerFlags.push(`SPF não passou (resultado: ${auth.spf})`);
+    if (auth.dkim && auth.dkim !== "pass") headerFlags.push(`DKIM não passou (resultado: ${auth.dkim})`);
+    if (auth.dmarc && auth.dmarc !== "pass") headerFlags.push(`DMARC não passou (resultado: ${auth.dmarc})`);
+    if (!auth.spf && !auth.dkim && !auth.dmarc) {
+      headerFlags.push("Nenhum resultado de autenticação (SPF/DKIM/DMARC) encontrado nos cabeçalhos — não foi possível verificar autenticidade");
+    }
+
+    const receivedChain = parseReceivedChain(headers);
+
+    const contentTypeHeader = getHeader(headers, "Content-Type") || "text/plain";
+    const cte = getHeader(headers, "Content-Transfer-Encoding");
+    const collector = {html: "", text: "", attachments: []};
+    if (contentTypeHeader.toLowerCase().startsWith("multipart/")) {
+      walkMime(contentTypeHeader, body, 0, collector);
+    } else if (contentTypeHeader.toLowerCase().startsWith("text/html")) {
+      const decoded = decodePart(body, cte);
+      collector.html = decoded.text != null ? decoded.text : new TextDecoder().decode(base64ToBytes(body));
+    } else {
+      const decoded = decodePart(body, cte);
+      collector.text = decoded.text != null ? decoded.text : new TextDecoder().decode(base64ToBytes(body));
+    }
+
+    const fullTextLower = (subject + "\n" + collector.text + "\n" + collector.html.replace(/<[^>]+>/g, " ")).toLowerCase();
+    const matchedKeywords = [...new Set(URGENCY_KEYWORDS.filter(kw => fullTextLower.includes(kw)))].sort();
+
+    const rawLinks = extractLinks(collector.text, collector.html);
+    const links = rawLinks.map(l => analyzeLink(l, fromDomain));
+    const riskyLinks = links.filter(l => l.flags.length);
+
+    const attachments = await Promise.all(collector.attachments.map(analyzeAttachment));
+    const riskyAttachments = attachments.filter(a => a.flags.length);
+
+    const hasExternalImages = /<img[^>]+src\s*=\s*["']https?:\/\//i.test(collector.html);
+
+    let score = 0;
+    score += 12 * headerFlags.length;
+    score += 15 * riskyLinks.length;
+    score += 20 * riskyAttachments.length;
+    score += 5 * matchedKeywords.length;
+    score = Math.min(score, 100);
+
+    let severity, verdict;
+    if (score >= 60) { severity = "high"; verdict = "ALTO RISCO — fortes indícios de phishing / conteúdo malicioso"; }
+    else if (score >= 30) { severity = "mod"; verdict = "RISCO MODERADO — vários indicadores suspeitos, investigar"; }
+    else if (score > 0) { severity = "low"; verdict = "RISCO BAIXO — poucos indicadores, mas revisar mesmo assim"; }
+    else { severity = "none"; verdict = "SEM INDICADORES ÓBVIOS — nenhuma heurística disparou"; }
+
+    return {
+      identificacao: {
+        assunto: subject || "(sem assunto)",
+        deNome: from.name, deEndereco: from.addr, deDominio: fromDomain,
+        replyTo: replyTo.addr || null, returnPath: returnPath.addr || null,
+        para: toRaw, data: dateRaw, messageId, mailer,
+      },
+      auth, receivedChain, headerFlags, matchedKeywords, hasExternalImages,
+      links, riskyLinks, attachments, riskyAttachments,
+      score, severity, verdict,
+    };
+  }
+
+  // ---- rendering ----
+  function authChip(label, value) {
+    const cls = value === "pass" ? "pass" : (value == null ? "unknown" : "fail");
+    return `<span class="chip ${cls}"><span class="dot"></span>${label}: ${value ?? "não encontrado"}</span>`;
+  }
+
+  function render(report) {
+    const r = report;
+    const sevClass = "sev-" + r.severity;
+    const idn = r.identificacao;
+
+    let html = `<div class="score-banner ${sevClass}">
+      <div class="score-num">${r.score}<span class="score-max">/100</span></div>
+      <div><div class="verdict-text">${escapeHtml(r.verdict)}</div>
+      <div class="verdict-sub">${r.headerFlags.length} indicador(es) de cabeçalho · ${r.riskyLinks.length} de ${r.links.length} link(s) suspeito(s) · ${r.riskyAttachments.length} de ${r.attachments.length} anexo(s) suspeito(s)</div></div>
+    </div>`;
+
+    html += `<section class="block"><h2>Identificação</h2><div class="kv-grid">
+      <dt>Assunto</dt><dd>${escapeHtml(idn.assunto)}</dd>
+      <dt>De (nome)</dt><dd>${escapeHtml(idn.deNome || "—")}</dd>
+      <dt>De (email)</dt><dd>${escapeHtml(idn.deEndereco || "—")}</dd>
+      <dt>De (domínio)</dt><dd>${escapeHtml(idn.deDominio || "—")}</dd>
+      <dt>Reply-To</dt><dd>${escapeHtml(idn.replyTo || "—")}</dd>
+      <dt>Return-Path</dt><dd>${escapeHtml(idn.returnPath || "—")}</dd>
+      <dt>Para</dt><dd>${escapeHtml(idn.para || "—")}</dd>
+      <dt>Data</dt><dd>${escapeHtml(idn.data || "—")}</dd>
+      <dt>Message-ID</dt><dd>${escapeHtml(idn.messageId || "—")}</dd>
+      <dt>Mailer</dt><dd>${escapeHtml(idn.mailer || "—")}</dd>
+    </div></section>`;
+
+    html += `<section class="block"><h2>Autenticação</h2>
+      <div class="auth-row">${authChip("SPF", r.auth.spf)}${authChip("DKIM", r.auth.dkim)}${authChip("DMARC", r.auth.dmarc)}</div>
+    </section>`;
+
+    html += `<section class="block"><h2>Indicadores nos cabeçalhos <span class="count">${r.headerFlags.length}</span></h2>`;
+    html += r.headerFlags.length
+      ? `<ul class="flag-list">${r.headerFlags.map(f => `<li class="flag-item"><span class="icon">!</span><span>${escapeHtml(f)}</span></li>`).join("")}</ul>`
+      : `<div class="empty-note">Nenhum indicador encontrado.</div>`;
+    html += `</section>`;
+
+    if (r.matchedKeywords.length) {
+      html += `<section class="block"><h2>Palavras-chave de engenharia social <span class="count">${r.matchedKeywords.length}</span></h2>
+        <div class="keyword-pills">${r.matchedKeywords.map(k => `<span class="pill">${escapeHtml(k)}</span>`).join("")}</div>
+      </section>`;
+    }
+
+    html += `<section class="block"><h2>Cadeia de servidores (Received) <span class="count">${r.receivedChain.length}</span></h2>`;
+    html += r.receivedChain.length
+      ? r.receivedChain.map((h, i) => `<div class="received-hop"><span class="idx">[${i+1}]</span>from=${escapeHtml(h.from || "?")}  by=${escapeHtml(h.by || "?")}  ips=${h.ips.join(", ") || "—"}</div>`).join("")
+      : `<div class="empty-note">Nenhum cabeçalho Received encontrado.</div>`;
+    html += `</section>`;
+
+    html += `<section class="block"><h2>Links <span class="count">${r.riskyLinks.length} suspeito(s) de ${r.links.length}</span></h2>`;
+    if (r.links.length) {
+      html += r.links.map(l => `<div class="link-card ${l.flags.length ? "risky" : "clean"}">
+        <div class="link-url">${escapeHtml(l.url)}</div>
+        ${l.displayText ? `<div class="link-text">texto exibido: "${escapeHtml(l.displayText)}"</div>` : ""}
+        ${l.flags.length ? `<div class="link-flags">${l.flags.map(f => `<div class="f">→ ${escapeHtml(f)}</div>`).join("")}</div>` : ""}
+      </div>`).join("");
+    } else {
+      html += `<div class="empty-note">Nenhum link encontrado no corpo do email.</div>`;
+    }
+    html += `</section>`;
+
+    html += `<section class="block"><h2>Anexos <span class="count">${r.riskyAttachments.length} suspeito(s) de ${r.attachments.length}</span></h2>`;
+    if (r.attachments.length) {
+      html += r.attachments.map(a => `<div class="att-card ${a.flags.length ? "risky" : "clean"}">
+        <div class="att-name">${escapeHtml(a.filename)} <span class="att-meta">(${a.sizeBytes} bytes, ${escapeHtml(a.contentType)})</span></div>
+        ${a.sha256 ? `<div class="hash">SHA-256: ${a.sha256}</div>` : ""}
+        ${a.flags.length ? `<div class="att-flags">${a.flags.map(f => `<div class="f">→ ${escapeHtml(f)}</div>`).join("")}</div>` : ""}
+      </div>`).join("");
+    } else {
+      html += `<div class="empty-note">Nenhum anexo encontrado.</div>`;
+    }
+    html += `</section>`;
+
+    if (r.hasExternalImages) {
+      html += `<section class="block"><h2>Rastreamento</h2>
+        <ul class="flag-list"><li class="flag-item"><span class="icon">!</span><span>O email carrega imagens remotas via HTML — pode ser usado como pixel de rastreamento para confirmar que o email foi aberto.</span></li></ul>
+      </section>`;
+    }
+
+    document.getElementById("results").innerHTML = html;
+    document.getElementById("results").classList.add("visible");
+  }
+
+  const btn = document.getElementById("analyze-btn");
+  const textarea = document.getElementById("raw-input");
+  const fileInput = document.getElementById("file-input");
+  const sampleBtn = document.getElementById("sample-btn");
+
+  btn.addEventListener("click", async () => {
+    const raw = textarea.value.trim();
+    if (!raw) { textarea.focus(); return; }
+    btn.disabled = true;
+    btn.textContent = "Analisando…";
+    try {
+      const report = await analyzeEmail(raw);
+      render(report);
+      document.getElementById("results").scrollIntoView({behavior: "smooth", block: "start"});
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Analisar email";
+    }
+  });
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { textarea.value = reader.result; };
+    reader.readAsText(file);
+  });
+
+  sampleBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    textarea.value = SAMPLE_EML;
+  });
+})();
+</script>
