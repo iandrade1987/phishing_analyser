@@ -17,6 +17,16 @@ Ambas fazem apenas análise **estática e heurística** do conteúdo do email �
 nenhuma faz requisições de rede (sem DNS, WHOIS ou consulta a blacklists),
 justamente para serem seguras de usar sobre emails potencialmente maliciosos.
 
+## Capturas de ecrã
+
+<p align="center">
+  <img src="assets/screenshots/interface.png" width="100%" alt="Interface do analisador" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/relatorio-topo.png" width="49%" alt="Topo do relatório: score de risco, identificação e autenticação" />
+  <img src="assets/screenshots/relatorio-links.png" width="49%" alt="Links suspeitos, anexos perigosos e rastreamento" />
+</p>
+
 > ⚠️ Um score alto é um forte indício, não uma prova definitiva de fraude, e
 > um score baixo não garante que o email é legítimo. Use como apoio à
 > análise humana, não como veredito automático.
