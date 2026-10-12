@@ -252,6 +252,84 @@ def parse_auth_results(msg) -> dict:
     return result
 
 
+IPV6_BRACKET_RE = re.compile(r"\[(?:IPv6:)?([0-9A-Fa-f:]{3,39})\]")
+HEADER_IP_SOURCES = ("X-Originating-IP", "X-Sender-IP", "X-Real-IP", "X-Client-IP")
+
+
+DOC_NETS = ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
+
+
+def classify_ip(ip: str) -> str:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return "invalido"
+    if addr.version == 4 and any(addr in ipaddress.ip_network(n) for n in DOC_NETS):
+        return "publico"  # faixas de documentacao (TEST-NET): tratadas como publicas em exemplos
+    if addr.is_loopback:
+        return "loopback"
+    if addr.is_private:
+        return "privado"
+    if addr.is_link_local or addr.is_reserved or addr.is_multicast:
+        return "reservado"
+    return "publico"
+
+
+def determine_origin(msg, received_chain: list) -> dict:
+    """Estima o IP de origem do email (cliente/servidor que o injetou na rede).
+
+    Percorre a cadeia Received do salto mais antigo (ultimo cabecalho) para o
+    mais recente e escolhe o primeiro IP publico. Cabecalhos como
+    X-Originating-IP sao listados tambem, mas podem ser forjados pelo remetente.
+    """
+    all_ips = []
+
+    for hop_index in range(len(received_chain) - 1, -1, -1):
+        hop = received_chain[hop_index]
+        ips = list(hop["ips_found"])
+        ips += [m for m in IPV6_BRACKET_RE.findall(hop["raw"]) if m not in ips]
+        for ip in ips:
+            all_ips.append({
+                "ip": ip,
+                "tipo": classify_ip(ip),
+                "fonte": f"Received (salto {hop_index + 1} de {len(received_chain)}, "
+                         f"{'mais antigo' if hop_index == len(received_chain) - 1 else 'intermediario'})",
+                "confiavel": True,
+            })
+
+    for name in HEADER_IP_SOURCES:
+        value = msg.get(name)
+        if value:
+            for ip in IP_RE.findall(str(value)) + IPV6_BRACKET_RE.findall(str(value)):
+                all_ips.append({
+                    "ip": ip, "tipo": classify_ip(ip),
+                    "fonte": f"Cabecalho {name} (pode ser forjado)",
+                    "confiavel": False,
+                })
+
+    for val in msg.get_all("Received-SPF", []) + msg.get_all("Authentication-Results", []):
+        for m in re.finditer(r"(?:client-ip=|smtp\.client-ip=|sender IP is\s+)\[?([0-9A-Fa-f.:]+)\]?",
+                              str(val), re.IGNORECASE):
+            all_ips.append({
+                "ip": m.group(1), "tipo": classify_ip(m.group(1)),
+                "fonte": "Resultado SPF/Authentication-Results (verificado pelo servidor receptor)",
+                "confiavel": True,
+            })
+
+    seen = set()
+    unique = []
+    for entry in all_ips:
+        if (entry["ip"], entry["fonte"]) not in seen:
+            seen.add((entry["ip"], entry["fonte"]))
+            unique.append(entry)
+
+    probable = next((e for e in unique if e["confiavel"] and e["tipo"] == "publico"), None)
+    if probable is None:
+        probable = next((e for e in unique if e["tipo"] == "publico"), None)
+
+    return {"ip_provavel": probable, "todos_ips": unique}
+
+
 # ----------------------------------------------------------------------------
 # Extracao de corpo, links e anexos
 # ----------------------------------------------------------------------------
@@ -542,6 +620,7 @@ def analyze_email(msg) -> dict:
 
     report["autenticacao"] = auth
     report["cadeia_received"] = received_chain
+    report["origem"] = determine_origin(msg, received_chain)
     report["indicadores_cabecalho"] = header_flags
     report["palavras_chave_urgencia_ou_engenharia_social"] = matched_keywords
     report["possui_imagens_remotas_html"] = has_external_images
@@ -589,6 +668,20 @@ def print_report(report: dict) -> None:
     print(f"Data         : {ident['data']}")
     print(f"Message-ID   : {ident['message_id']}")
     print(f"Mailer/Agent : {ident['user_agent_x_mailer']}")
+
+    origem = report["origem"]
+    print("\n--- IP DE ORIGEM ---")
+    prov = origem["ip_provavel"]
+    if prov:
+        print(f"IP provavel de origem: {prov['ip']}  [{prov['tipo']}]")
+        print(f"Fonte                : {prov['fonte']}")
+    else:
+        print("Nenhum IP publico identificado nos cabecalhos (todos privados/ausentes).")
+    others = [e for e in origem["todos_ips"] if e is not prov]
+    if others:
+        print("Outros IPs encontrados:")
+        for e in others:
+            print(f"  - {e['ip']}  [{e['tipo']}]  {e['fonte']}")
 
     print("\n--- AUTENTICACAO (SPF/DKIM/DMARC) ---")
     auth = report["autenticacao"]

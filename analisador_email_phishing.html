@@ -286,6 +286,18 @@
   .received-hop:last-child { border-bottom: none; }
   .received-hop .idx { color: var(--accent); margin-right: 6px; }
 
+  .origin-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .origin-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .origin-ip { font-family: var(--mono); font-size: 1.5rem; font-weight: 700; color: var(--accent); margin-top: 2px; word-break: break-all; }
+  .origin-ip .ip-type { font-size: 0.72rem; font-weight: 400; color: var(--muted); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
+  .origin-src { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+
   .keyword-pills { display: flex; flex-wrap: wrap; gap: 6px; }
   .keyword-pills .pill {
     background: var(--warning-bg);
@@ -436,7 +448,7 @@ VGhpcyBpcyBhIGZha2UgdGVzdCBhdHRhY2htZW50IGZvciB0ZXN0aW5nIHB1cnBvc2VzIG9ubHku
     } catch { return new Uint8Array(); }
   }
   async function sha256Hex(bytes) {
-    if (!bytes.length) return null;
+    if (!bytes.length || !(window.crypto && crypto.subtle)) return null;
     const buf = await crypto.subtle.digest("SHA-256", bytes);
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
   }
@@ -491,6 +503,63 @@ VGhpcyBpcyBhIGZha2UgdGVzdCBhdHRhY2htZW50IGZvciB0ZXN0aW5nIHB1cnBvc2VzIG9ubHku
       const byM = clean.match(/by\s+(\S+)/);
       return {raw: clean, ips, from: fromM ? fromM[1] : null, by: byM ? byM[1] : null};
     });
+  }
+
+  function classifyIp(ip) {
+    if (ip.includes(":")) {
+      const l = ip.toLowerCase();
+      if (l === "::1") return "loopback";
+      if (/^f[cd]/.test(l)) return "privado";
+      if (/^fe[89ab]/.test(l)) return "reservado";
+      return "publico";
+    }
+    const [a, b] = ip.split(".").map(Number);
+    if (a === 127) return "loopback";
+    if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return "privado";
+    if ((a === 169 && b === 254) || a === 0 || a >= 224 ||
+        (a === 100 && b >= 64 && b <= 127) || (a === 198 && (b === 18 || b === 19))) {
+      return "reservado";
+    }
+    return "publico";
+  }
+
+  function determineOrigin(headers, receivedChain) {
+    const ipv4Re = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
+    const ipv6Re = /\[(?:IPv6:)?([0-9A-Fa-f:]{3,39})\]/g;
+    const all = [];
+    const n = receivedChain.length;
+    for (let i = n - 1; i >= 0; i--) {
+      const hop = receivedChain[i];
+      const ips = [...hop.ips];
+      for (const m of hop.raw.matchAll(ipv6Re)) if (!ips.includes(m[1])) ips.push(m[1]);
+      for (const ip of ips) {
+        all.push({ip, tipo: classifyIp(ip), confiavel: true,
+          fonte: `Received (salto ${i + 1} de ${n}, ${i === n - 1 ? "mais antigo" : "intermediário"})`});
+      }
+    }
+    for (const name of ["X-Originating-IP", "X-Sender-IP", "X-Real-IP", "X-Client-IP"]) {
+      const v = getHeader(headers, name);
+      if (!v) continue;
+      const found = [...(v.match(ipv4Re) || []), ...[...v.matchAll(ipv6Re)].map(m => m[1])];
+      for (const ip of found) all.push({ip, tipo: classifyIp(ip), confiavel: false, fonte: `Cabeçalho ${name} (pode ser forjado)`});
+    }
+    const authVals = [...getAllHeaders(headers, "Received-SPF"), ...getAllHeaders(headers, "Authentication-Results")];
+    for (const v of authVals) {
+      for (const m of v.matchAll(/(?:client-ip=|smtp\.client-ip=|sender IP is\s+)\[?([0-9A-Fa-f.:]+)\]?/gi)) {
+        all.push({ip: m[1], tipo: classifyIp(m[1]), confiavel: true,
+          fonte: "Resultado SPF/Authentication-Results (verificado pelo servidor receptor)"});
+      }
+    }
+    const seen = new Set();
+    const unique = all.filter(e => {
+      const k = e.ip + "|" + e.fonte;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const probable = unique.find(e => e.confiavel && e.tipo === "publico") ||
+                     unique.find(e => e.tipo === "publico") || null;
+    return {probable, all: unique};
   }
 
   // ---- MIME body parsing ----
@@ -741,7 +810,8 @@ VGhpcyBpcyBhIGZha2UgdGVzdCBhdHRhY2htZW50IGZvciB0ZXN0aW5nIHB1cnBvc2VzIG9ubHku
         replyTo: replyTo.addr || null, returnPath: returnPath.addr || null,
         para: toRaw, data: dateRaw, messageId, mailer,
       },
-      auth, receivedChain, headerFlags, matchedKeywords, hasExternalImages,
+      auth, receivedChain, origin: determineOrigin(headers, receivedChain),
+      headerFlags, matchedKeywords, hasExternalImages,
       links, riskyLinks, attachments, riskyAttachments,
       score, severity, verdict,
     };
@@ -776,6 +846,23 @@ VGhpcyBpcyBhIGZha2UgdGVzdCBhdHRhY2htZW50IGZvciB0ZXN0aW5nIHB1cnBvc2VzIG9ubHku
       <dt>Message-ID</dt><dd>${escapeHtml(idn.messageId || "—")}</dd>
       <dt>Mailer</dt><dd>${escapeHtml(idn.mailer || "—")}</dd>
     </div></section>`;
+
+    const o = r.origin;
+    html += `<section class="block"><h2>IP de origem <span class="count">${o.all.length} encontrado(s)</span></h2>`;
+    if (o.probable) {
+      html += `<div class="origin-card">
+        <div class="origin-label">IP provável de origem</div>
+        <div class="origin-ip">${escapeHtml(o.probable.ip)} <span class="ip-type">${o.probable.tipo}</span></div>
+        <div class="origin-src">${escapeHtml(o.probable.fonte)}</div>
+      </div>`;
+    } else {
+      html += `<div class="empty-note">Nenhum IP público identificado nos cabeçalhos (todos privados ou ausentes).</div>`;
+    }
+    const others = o.all.filter(e => e !== o.probable);
+    if (others.length) {
+      html += `<div class="ip-list">${others.map(e => `<div class="received-hop"><span class="idx">${escapeHtml(e.ip)}</span>[${e.tipo}] ${escapeHtml(e.fonte)}</div>`).join("")}</div>`;
+    }
+    html += `</section>`;
 
     html += `<section class="block"><h2>Autenticação</h2>
       <div class="auth-row">${authChip("SPF", r.auth.spf)}${authChip("DKIM", r.auth.dkim)}${authChip("DMARC", r.auth.dmarc)}</div>

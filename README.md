@@ -36,6 +36,11 @@ justamente para serem seguras de usar sobre emails potencialmente maliciosos.
 - **Identificação**: nome de exibição vs. domínio real do remetente,
   `Reply-To`, `Return-Path`, `Message-ID`, cliente de envio
 - **Autenticação**: resultados de SPF, DKIM e DMARC
+- **IP de origem**: estima de qual IP o email saiu (primeiro IP público da
+  cadeia `Received`, do salto mais antigo ao mais recente), classifica cada IP
+  (público/privado/reservado) e lista também `X-Originating-IP` e o IP
+  verificado no SPF — esses cabeçalhos podem ser forjados, por isso aparecem
+  como menos confiáveis
 - **Cadeia de servidores**: todos os saltos `Received`, com IPs de origem
 - **Links**: encurtadores de URL, IPs diretos, texto do link ≠ destino real,
   domínios parecidos com o do remetente (typosquatting), TLDs suspeitos
